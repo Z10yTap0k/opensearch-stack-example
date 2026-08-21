@@ -1,0 +1,32 @@
+# Minimal OpenTelemetry Collector config for the demo.
+# Receives OTLP/GRPC traces and prints them to stdout via the debug exporter.
+receivers:
+   otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+         http:
+          endpoint: 0.0.0.0:4318
+
+processors:
+       batch: {}
+
+exporters:
+   # Human-readable dump of every trace to the collector logs
+    debug:
+       verbosity: detailed
+   # Uncomment the two blocks below to forward to Jaeger / Tempo instead.
+   #
+   # otlp/jaeger:
+   #    endpoint: jaeger:4317
+   # retry_on_failure: {}
+   #
+   # http:
+   #    endpoint: http://tempo:4318/v1/traces
+
+service:
+    pipelines:
+      traces:
+          receivers: [otlp]
+        processors: [batch]
+        exporters: [debug]

@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "dgSpecHash": "+7P60D+XRGo=",
+  "success": true,
+  "projectFilePath": "/Users/admin/Proj/opensearch/dotnet-otel-demo/server/server.csproj",
+  "expectedPackageFiles": [
+    "/Users/admin/.nuget/packages/opentelemetry/1.11.0/opentelemetry.1.11.0.nupkg.sha512",
+    "/Users/admin/.nuget/packages/opentelemetry.api/1.17.0/opentelemetry.api.1.17.0.nupkg.sha512",
+    "/Users/admin/.nuget/packages/opentelemetry.api.providerbuilderextensions/1.17.0/opentelemetry.api.providerbuilderextensions.1.17.0.nupkg.sha512",
+    "/Users/admin/.nuget/packages/opentelemetry.exporter.console/1.11.0/opentelemetry.exporter.console.1.11.0.nupkg.sha512",
+    "/Users/admin/.nuget/packages/opentelemetry.exporter.opentelemetryprotocol/1.11.0/opentelemetry.exporter.opentelemetryprotocol.1.11.0.nupkg.sha512",
+    "/Users/admin/.nuget/packages/opentelemetry.extensions.hosting/1.11.0/opentelemetry.extensions.hosting.1.11.0.nupkg.sha512",
+    "/Users/admin/.nuget/packages/opentelemetry.instrumentation.aspnet/1.17.0/opentelemetry.instrumentation.aspnet.1.17.0.nupkg.sha512",
+    "/Users/admin/.nuget/packages/opentelemetry.instrumentation.aspnet.telemetryhttpmodule/1.17.0/opentelemetry.instrumentation.aspnet.telemetryhttpmodule.1.17.0.nupkg.sha512",
+    "/Users/admin/.nuget/packages/opentelemetry.instrumentation.aspnetcore/1.11.0/opentelemetry.instrumentation.aspnetcore.1.11.0.nupkg.sha512",
+    "/Users/admin/.nuget/packages/opentelemetry.instrumentation.http/1.17.0/opentelemetry.instrumentation.http.1.17.0.nupkg.sha512",
+    "/Users/admin/.nuget/packages/opentelemetry.instrumentation.runtime/1.17.0/opentelemetry.instrumentation.runtime.1.17.0.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1902",
+      "level": "Warning",
+      "message": "Package 'OpenTelemetry.Exporter.OpenTelemetryProtocol' 1.11.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-4625-4j76-fww9",
+      "projectPath": "/Users/admin/Proj/opensearch/dotnet-otel-demo/server/server.csproj",
+      "warningLevel": 1,
+      "filePath": "/Users/admin/Proj/opensearch/dotnet-otel-demo/server/server.csproj",
+      "libraryId": "OpenTelemetry.Exporter.OpenTelemetryProtocol",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    },
+    {
+      "code": "NU1701",
+      "level": "Warning",
+      "message": "Package 'OpenTelemetry.Instrumentation.AspNet 1.17.0' was restored using '.NETFramework,Version=v4.6.1, .NETFramework,Version=v4.6.2, .NETFramework,Version=v4.7, .NETFramework,Version=v4.7.1, .NETFramework,Version=v4.7.2, .NETFramework,Version=v4.8, .NETFramework,Version=v4.8.1' instead of the project target framework 'net10.0'. This package may not be fully compatible with your project.",
+      "projectPath": "/Users/admin/Proj/opensearch/dotnet-otel-demo/server/server.csproj",
+      "warningLevel": 1,
+      "filePath": "/Users/admin/Proj/opensearch/dotnet-otel-demo/server/server.csproj",
+      "libraryId": "OpenTelemetry.Instrumentation.AspNet",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    },
+    {
+      "code": "NU1701",
+      "level": "Warning",
+      "message": "Package 'OpenTelemetry.Instrumentation.AspNet.TelemetryHttpModule 1.17.0' was restored using '.NETFramework,Version=v4.6.1, .NETFramework,Version=v4.6.2, .NETFramework,Version=v4.7, .NETFramework,Version=v4.7.1, .NETFramework,Version=v4.7.2, .NETFramework,Version=v4.8, .NETFramework,Version=v4.8.1' instead of the project target framework 'net10.0'. This package may not be fully compatible with your project.",
+      "projectPath": "/Users/admin/Proj/opensearch/dotnet-otel-demo/server/server.csproj",
+      "warningLevel": 1,
+      "filePath": "/Users/admin/Proj/opensearch/dotnet-otel-demo/server/server.csproj",
+      "libraryId": "OpenTelemetry.Instrumentation.AspNet.TelemetryHttpModule",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    }
+  ]
+}

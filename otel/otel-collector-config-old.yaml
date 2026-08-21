@@ -1,0 +1,63 @@
+extensions:
+  basicauth/opensearch:
+    client_auth:
+      username: "admin"
+      password: "YourSecurePassword123!"
+  health_check:
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+
+exporters:
+  opensearch/traces:
+    logs_index: otel-traces
+    http:
+      endpoint: "https://opensearch:9200"
+      tls:
+        insecure_skip_verify: true
+      # Ссылаемся на созданное выше расширение аутентификации
+      auth:
+        authenticator: basicauth/opensearch
+  
+  opensearch/logs:
+    logs_index: otel-logs
+    http:
+      endpoint: "https://opensearch:9200"
+      tls:
+        insecure_skip_verify: true
+      # Ссылаемся на созданное выше расширение аутентификации
+      auth:
+        authenticator: basicauth/opensearch
+
+  # ИСПРАВЛЕННЫЙ ЭКСПОРТЕР: Хранение логов в S3 (MinIO)
+  awss3:
+    s3uploader:
+      s3_bucket: "otel-archive" # ЗАМЕНА: строго s3_bucket вместо bucket
+      region: "us-east-1"
+      s3_force_path_style: true
+      endpoint: "http://minio:9000"
+      s3_prefix: "logs" # Опциональная папка в бакет
+
+  # Optional: Also output to terminal console for debugging
+  debug:
+    verbosity: normal
+
+service:
+  extensions: [basicauth/opensearch, health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [opensearch/traces, debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [opensearch/logs, debug]

@@ -1,0 +1,57 @@
+entry-pipeline:
+  source:
+    otlp_traces:
+      ssl: false
+      port: 21890
+      # port: 4317 # Единый стандартный gRPC-порт OpenTelemetry
+      authentication:
+        # Рекомендуется настроить unauthenticated: false и добавить TLS в продакшене
+        unauthenticated:
+  buffer:
+    bounded_blocking:
+      buffer_size: 1024
+      batch_size: 1
+  sink:
+    - stdout:
+    - pipeline:
+        name: "raw-pipeline"
+    - pipeline:
+        name: "service-map-pipeline"
+
+raw-pipeline:
+  source:
+    pipeline:
+      name: "entry-pipeline"
+  buffer:
+    bounded_blocking:
+      buffer_size: 1024
+      batch_size: 1
+  processor:
+    - otel_traces:
+  sink:
+    - opensearch:
+        hosts: [ "https://opensearch:9200" ]
+        username: "admin"
+        password: "YourSecurePassword123!"
+        insecure: true
+        index_type: trace-analytics-raw
+
+service-map-pipeline:
+  source:
+    pipeline:
+      name: "entry-pipeline"
+  buffer:
+    bounded_blocking:
+      buffer_size: 1024
+      batch_size: 1
+  processor:
+    - otel_traces:
+    - service_map:
+        window_duration: 60
+  sink:
+    - opensearch:
+        hosts: [ "https://opensearch:9200" ]
+        username: "admin"
+        password: "YourSecurePassword123!"
+        insecure: true
+        index_type: "trace-analytics-service-map"

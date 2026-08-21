@@ -1,0 +1,203 @@
+services:
+  # OpenSearch Node
+  opensearch:
+    build:
+      context: .
+      dockerfile: opensearch.Dockerfile
+    container_name: opensearch-node
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch-node
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1024m -Xmx1024m"
+      - DISABLE_SECURITY_PLUGIN=false
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=YourSecurePassword123!
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    networks:
+      - otel-network
+
+  opensearch-bootstrap:
+    image: alpine:3.18
+    container_name: opensearch-bootstrap
+    volumes:
+      - ./bootstrap.sh:/bootstrap.sh
+    entrypoint: ["/bin/sh", "-c"]
+    command: 
+      - "apk add --no-cache curl && /bootstrap.sh"
+    depends_on:
+      - opensearch
+      - opensearch-dashboards
+      - prometheus
+    networks:
+      - otel-network
+    restart: "no"
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:latest
+    container_name: opensearch-dashboards
+    ports:
+      - "5601:5601"
+    volumes:
+      - ./opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml
+    depends_on:
+      - opensearch
+    networks:
+      - otel-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: local-s3-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000" # S3 API
+      - "9001:9001" # Web Консоль
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: MinioPassword123!
+    volumes:
+      - minio-data:/data
+    networks:
+      - otel-network
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init-buckets
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until (/usr/bin/mc alias set myminio http://minio:9000 minioadmin MinioPassword123!) do echo 'Waiting for MinIO...' && sleep 1; done;
+      /usr/bin/mc mb myminio/opensearch-snapshots || true;
+      /usr/bin/mc mb myminio/otel-archive || true;
+      exit 0;
+      "
+    networks:
+      - otel-network
+
+  data-prepper:
+    image: opensearchproject/data-prepper:latest
+    container_name: data-prepper
+    volumes:
+      - ./data-prepper/pipelines:/usr/share/data-prepper/pipelines:ro
+      - ./data-prepper/config/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml
+      - ./data-prepper/log4j2.properties:/usr/share/data-prepper/config/log4j2.properties
+    ports:
+      - "21890:21890" # Traces gRPC
+      - "21891:21891" # Logs gRPC
+    depends_on:
+      - opensearch
+    networks:
+      - otel-network
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    environment:
+      # AWS SDK внутри коллектора автоматически прочитает эти переменные
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=MinioPassword123!
+    ports:
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+      - "8889:8889"   # Prometheus exporter metrics
+    # healthcheck:
+    #   # Проверяем официальный эндпоинт здоровья коллектора
+    #   #test: ["CMD", "curl", "-f", "http://localhost:13133/"]
+    #   # test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:13133/ || exit 1"]
+    #   test: ["CMD", "/otelcol-contrib", "healthcheck"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
+    depends_on:
+      - opensearch
+      - data-prepper
+    networks:
+      - otel-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    networks:
+      - otel-network
+
+  # Демо-приложение генерирующее логи и трейсы
+  # demo-app:
+  #   build:
+  #     context: ./app
+  #     dockerfile: Dockerfile
+  #   container_name: demo-python-app
+  #   # volumes:
+  #   #   - ./app:/app
+  #   # depends_on:
+  #   #   otel-collector:
+  #   #     condition: service_healthy # Ждем, пока коллектор станет healthy
+  #   networks:
+  #     - otel-network
+
+  server:
+    build:
+      context: ./dotnet-otel-demo/server
+      dockerfile: Dockerfile
+    container_name: demo-server
+    environment:
+      OTEL_SERVICE_NAME: demo-server
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    ports:
+      - "5000:5000"
+    networks:
+      - otel-network
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ./dotnet-otel-demo/client
+      dockerfile: Dockerfile
+    container_name: demo-client
+    environment:
+      SERVER_URL: http://demo-server:5000/api/test
+      INTERVAL_SECONDS: "30"
+      OTEL_SERVICE_NAME: demo-client
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    depends_on:
+      - server
+      - otel-collector
+    networks:
+      - otel-network
+    restart: unless-stopped
+
+volumes:
+  minio-data:
+    driver: local
+  opensearch-data:
+    driver: local
+  prometheus-data:
+    driver: local
+
+networks:
+  otel-network:
+    driver: bridge
