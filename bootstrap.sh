@@ -54,7 +54,7 @@ curl -X PUT -k -u "$AUTH" \
   "$OPENSEARCH_URL/_plugins/_security/api/roles/admin" \
   -d @/tmp/payload.json
 
-# 5. Регистрация репозитория хранения снэпшотов в S3 (MinIO)
+# 5. Регистрация репозитория хранения снэпшотов в S3 (SeaweedFS)
 echo "Регистрация репозитория S3 Snapshots..."
 curl -X PUT -k -u "$AUTH" \
   -H "Content-Type: application/json" \
@@ -64,7 +64,7 @@ curl -X PUT -k -u "$AUTH" \
     "settings": {
       "bucket": "opensearch-snapshots",
       "region": "us-east-1",
-      "endpoint": "http://minio:9000",
+      "endpoint": "http://seaweedfs:8333",
       "protocol": "http",
       "path_style_access": true
     }

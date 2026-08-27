@@ -37,13 +37,13 @@ exporters:
       auth:
         authenticator: basicauth/opensearch
 
-  # ИСПРАВЛЕННЫЙ ЭКСПОРТЕР: Хранение логов в S3 (MinIO)
+  # Экспортёр: хранение логов в S3-совместимом SeaweedFS
   awss3:
     s3uploader:
       s3_bucket: "otel-archive" # ЗАМЕНА: строго s3_bucket вместо bucket
       region: "us-east-1"
       s3_force_path_style: true
-      endpoint: "http://minio:9000"
+      endpoint: "http://seaweedfs:8333"
       s3_prefix: "logs" # Опциональная папка в бакет
 
   # Optional: Also output to terminal console for debugging

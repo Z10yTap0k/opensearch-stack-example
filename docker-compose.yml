@@ -39,6 +39,7 @@ services:
       - opensearch
       - opensearch-dashboards
       - prometheus
+      - seaweedfs
     networks:
       - otel-network
     restart: "no"
@@ -55,33 +56,19 @@ services:
     networks:
       - otel-network
 
-  minio:
-    image: minio/minio:latest
-    container_name: local-s3-minio
-    command: server /data --console-address ":9001"
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.40
+    container_name: seaweedfs
+    command: ["mini", "-dir=/data", "-ip=seaweedfs", "-ip.bind=0.0.0.0", "-s3.port=8333"]
     ports:
-      - "9000:9000" # S3 API
-      - "9001:9001" # Web Консоль
+      - "9000:8333" # S3 API
+      - "23646:23646" # SeaweedFS Admin UI
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: MinioPassword123!
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: MinioPassword123!
+      S3_BUCKET: opensearch-snapshots,otel-archive
     volumes:
-      - minio-data:/data
-    networks:
-      - otel-network
-
-  minio-init:
-    image: minio/mc:latest
-    container_name: minio-init-buckets
-    depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c "
-      until (/usr/bin/mc alias set myminio http://minio:9000 minioadmin MinioPassword123!) do echo 'Waiting for MinIO...' && sleep 1; done;
-      /usr/bin/mc mb myminio/opensearch-snapshots || true;
-      /usr/bin/mc mb myminio/otel-archive || true;
-      exit 0;
-      "
+      - seaweedfs-data:/data
     networks:
       - otel-network
 
@@ -125,6 +112,7 @@ services:
     depends_on:
       - opensearch
       - data-prepper
+      - seaweedfs
     networks:
       - otel-network
 
@@ -191,7 +179,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  minio-data:
+  seaweedfs-data:
     driver: local
   opensearch-data:
     driver: local
