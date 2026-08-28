@@ -1,0 +1,67 @@
+{
+  "realm": "opensearch",
+  "enabled": true,
+  "displayName": "OpenSearch local development",
+  "roles": {
+    "realm": [
+      { "name": "kibanauser", "description": "Allows OpenSearch Dashboards access" },
+      { "name": "dev_team", "description": "Development tenant membership" },
+      { "name": "prod_team", "description": "Production tenant membership" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "opensearch-dashboards",
+      "name": "OpenSearch Dashboards",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "OpenSearchOidcClientSecret123!",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:5601/*"],
+      "webOrigins": ["http://localhost:5601"],
+      "protocolMappers": [
+        {
+          "name": "OpenSearch realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "dev-user",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Development",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "DevUserPassword123!", "temporary": false }
+      ],
+      "realmRoles": ["kibanauser", "dev_team"]
+    },
+    {
+      "username": "prod-user",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Production",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "ProdUserPassword123!", "temporary": false }
+      ],
+      "realmRoles": ["kibanauser", "prod_team"]
+    }
+  ]
+}

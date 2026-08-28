@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using OpenTelemetry;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -31,6 +33,9 @@ var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 
 // A dedicated source for our custom "call" span.
 using var activitySource = new ActivitySource("OpenTelemetryDemo.Client");
+using var meter = new Meter("OpenTelemetryDemo.Client");
+var requestCounter = meter.CreateCounter<long>("demo.client.requests");
+var requestDuration = meter.CreateHistogram<double>("demo.client.request.duration", unit: "ms");
 
 
 var resourceBuilder = ResourceBuilder.CreateDefault()
@@ -44,6 +49,18 @@ using var tracerProvider =
         .AddSource(activitySource.Name) // our custom "InvokeServer" span
         .AddHttpClientInstrumentation() // automatic spans for HttpClient
         .AddConsoleExporter() // print spans to stdout
+        .AddOtlpExporter(o =>
+        {
+            o.Endpoint = new Uri(otlpEndpoint);
+            o.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.Grpc;
+        })
+        .Build();
+
+using var meterProvider =
+    Sdk.CreateMeterProviderBuilder().SetResourceBuilder(resourceBuilder)
+        .AddMeter(meter.Name)
+        .AddMeter("System.Net.Http")
+        .AddConsoleExporter()
         .AddOtlpExporter(o =>
         {
             o.Endpoint = new Uri(otlpEndpoint);
@@ -78,10 +95,14 @@ while (!stopping.Token.IsCancellationRequested)
 
     try
     {
+        var requestStarted = Stopwatch.GetTimestamp();
         using var response = await httpClient.GetAsync(url, stopping.Token);
         var body = await response.Content.ReadAsStringAsync(stopping.Token);
 
         activity?.SetTag("http.status_code", (int)response.StatusCode);
+        requestCounter.Add(1, new KeyValuePair<string, object?>("http.response.status_code", response.StatusCode));
+        requestDuration.Record(Stopwatch.GetElapsedTime(requestStarted).TotalMilliseconds,
+            new KeyValuePair<string, object?>("http.response.status_code", response.StatusCode));
         Console.WriteLine($"[{DateTimeOffset.Now:HH:mm:ss}] id={id} "
                           + $"status={(int)response.StatusCode} {response.StatusCode} -> {body}");
     }

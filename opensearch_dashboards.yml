@@ -1,20 +1,40 @@
 server.host: "0.0.0.0"
 opensearch.hosts: ["https://opensearch:9200"]
 
-opensearch.username: "admin"
-opensearch.password: "YourSecurePassword123!"
+# Внутренний сервисный пользователь Dashboards; его имя совпадает с server_username Security plugin.
+opensearch.username: "kibanaserver"
+opensearch.password: "kibanaserver"
 opensearch.ssl.verificationMode: "none"
+opensearch.requestHeadersAllowlist: ["Authorization", "securitytenant"]
+
+# OIDC via локальный Keycloak. Basic auth оставлен для аварийного входа администратора.
+opensearch_security.auth.type: ["basicauth", "openid"]
+opensearch_security.auth.multiple_auth_enabled: true
+opensearch_security.ui.openid.login.buttonname: "Войти через Keycloak"
+opensearch_security.openid.connect_url: "http://keycloak.lvh.me:8080/realms/opensearch/.well-known/openid-configuration"
+opensearch_security.openid.client_id: "opensearch-dashboards"
+opensearch_security.openid.client_secret: "${OPENID_CLIENT_SECRET}"
+opensearch_security.openid.base_redirect_url: "http://localhost:5601"
+opensearch_security.openid.verify_hostnames: false
+opensearch_security.openid.logout_url: "http://keycloak.lvh.me:8080/realms/opensearch/protocol/openid-connect/logout"
+opensearch_security.cookie.secure: false
 
 # Enable Multiple Data Sources feature
 data_source.enabled: false
 
-explore.enabled: false
+explore.enabled: true
 explore.discoverTraces.enabled: false
 explore.discoverMetrics.enabled: false
 
 datasetManagement.enabled: false
 
 workspace.enabled: false
+
+# Пользователям OIDC доступны только назначенные custom tenants.
+opensearch_security.multitenancy.enabled: true
+opensearch_security.multitenancy.tenants.enable_global: false
+opensearch_security.multitenancy.tenants.enable_private: false
+opensearch_security.multitenancy.tenants.preferred: ["dev_team", "prod_team"]
 
 uiSettings:
   overrides:

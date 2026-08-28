@@ -1,0 +1,18 @@
+{
+  "index_patterns": ["prod-app-server"],
+  "priority": 300,
+  "data_stream": {},
+  "template": {
+    "settings": { "number_of_shards": 1, "number_of_replicas": 0 },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "message": { "type": "match_only_text" },
+        "container_name": { "type": "keyword" },
+        "container_id": { "type": "keyword" },
+        "image": { "type": "keyword" }
+      }
+    }
+  },
+  "_meta": { "tenant": "prod_team", "description": "Docker logs from demo-server" }
+}

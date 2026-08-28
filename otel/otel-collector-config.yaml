@@ -17,11 +17,6 @@ receivers:
 #   batch:
 
 exporters:
-  otlp/data-prepper-traces:
-    endpoint: "data-prepper:21890"
-    tls:
-      insecure: true
-
   # opensearch:
   #   mapping:
   #     mode: "ss4o"
@@ -38,6 +33,11 @@ exporters:
 
   otlphttp/prometheus:
     endpoint: "http://prometheus:9090/api/v1/otlp"
+    tls:
+      insecure: true
+
+  otlp/data-prepper:
+    endpoint: "data-prepper:21893"
     tls:
       insecure: true
 
@@ -62,11 +62,11 @@ service:
     metrics:
       receivers: [otlp]
       processors: []
-      exporters: [otlphttp/prometheus]
+      exporters: [otlphttp/prometheus, otlp/data-prepper]
     traces:
       receivers: [otlp]
       processors: []
-      exporters: [otlp/data-prepper-traces, debug]
+      exporters: [otlp/data-prepper, debug]
     logs:
       receivers: [otlp]
       processors: []

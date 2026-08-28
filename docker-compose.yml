@@ -13,6 +13,8 @@ services:
       - "OPENSEARCH_JAVA_OPTS=-Xms1024m -Xmx1024m"
       - DISABLE_SECURITY_PLUGIN=false
       - OPENSEARCH_INITIAL_ADMIN_PASSWORD=YourSecurePassword123!
+      # Требуется только для локального bootstrap, который добавляет OIDC auth domain через Security REST API.
+      - plugins.security.unsupported.restapi.allow_securityconfig_modification=true
     ulimits:
       memlock:
         soft: -1
@@ -24,6 +26,9 @@ services:
       - "9200:9200"
     volumes:
       - opensearch-data:/usr/share/opensearch/data
+    # В контейнерах OIDC hostname направляется на опубликованный порт Keycloak через host gateway.
+    extra_hosts:
+      - "keycloak.lvh.me:host-gateway"
     networks:
       - otel-network
 
@@ -32,14 +37,19 @@ services:
     container_name: opensearch-bootstrap
     volumes:
       - ./bootstrap.sh:/bootstrap.sh
+      - ./templates:/templates:ro
+      - ./policies:/policies:ro
     entrypoint: ["/bin/sh", "-c"]
     command: 
-      - "apk add --no-cache curl && /bootstrap.sh"
+      - "apk add --no-cache curl jq && /bootstrap.sh"
     depends_on:
       - opensearch
       - opensearch-dashboards
       - prometheus
       - seaweedfs
+      - keycloak
+    extra_hosts:
+      - "keycloak.lvh.me:host-gateway"
     networks:
       - otel-network
     restart: "no"
@@ -51,10 +61,35 @@ services:
       - "5601:5601"
     volumes:
       - ./opensearch_dashboards.yml:/usr/share/opensearch-dashboards/config/opensearch_dashboards.yml
+    environment:
+      OPENID_CLIENT_SECRET: OpenSearchOidcClientSecret123!
+    extra_hosts:
+      - "keycloak.lvh.me:host-gateway"
     depends_on:
       - opensearch
+      - keycloak
+    # Dashboards читает OIDC discovery на старте; Keycloak в dev mode может быть ещё не готов.
+    restart: on-failure
     networks:
       - otel-network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    container_name: keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: keycloak-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: KeycloakAdminPassword123!
+      # lvh.me резолвится браузером в 127.0.0.1; в контейнерах адрес переопределён через host gateway.
+      KC_HOSTNAME: http://keycloak.lvh.me:8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak/realm-opensearch.json:/opt/keycloak/data/import/realm-opensearch.json:ro
+    networks:
+      otel-network:
+        aliases:
+          - keycloak.lvh.me
 
   seaweedfs:
     image: chrislusf/seaweedfs:4.40
@@ -80,12 +115,29 @@ services:
       - ./data-prepper/config/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml
       - ./data-prepper/log4j2.properties:/usr/share/data-prepper/config/log4j2.properties
     ports:
-      - "21890:21890" # Traces gRPC
-      - "21891:21891" # Logs gRPC
+      - "21893:21893" # Унифицированный OTLP/gRPC endpoint Data Prepper
     depends_on:
       - opensearch
     networks:
       - otel-network
+
+  vector:
+    image: timberio/vector:0.57.0-alpine
+    container_name: vector
+    command: ["--config", "/etc/vector/vector.yaml"]
+    environment:
+      OPENSEARCH_USERNAME: admin
+      OPENSEARCH_PASSWORD: YourSecurePassword123!
+    volumes:
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      # Vector uses Docker API to collect stdout/stderr from containers.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - vector-data:/var/lib/vector
+    depends_on:
+      - opensearch
+    networks:
+      - otel-network
+    restart: unless-stopped
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:latest
@@ -133,20 +185,6 @@ services:
     networks:
       - otel-network
 
-  # Демо-приложение генерирующее логи и трейсы
-  # demo-app:
-  #   build:
-  #     context: ./app
-  #     dockerfile: Dockerfile
-  #   container_name: demo-python-app
-  #   # volumes:
-  #   #   - ./app:/app
-  #   # depends_on:
-  #   #   otel-collector:
-  #   #     condition: service_healthy # Ждем, пока коллектор станет healthy
-  #   networks:
-  #     - otel-network
-
   server:
     build:
       context: ./dotnet-otel-demo/server
@@ -184,6 +222,8 @@ volumes:
   opensearch-data:
     driver: local
   prometheus-data:
+    driver: local
+  vector-data:
     driver: local
 
 networks:

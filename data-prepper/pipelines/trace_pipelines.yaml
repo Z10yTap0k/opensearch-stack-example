@@ -1,31 +1,47 @@
-entry-pipeline:
+version: "2"
+
+# Единая точка приёма OTLP/gRPC для всех сигналов OpenTelemetry.
+otel-telemetry-pipeline:
   source:
-    otlp_traces:
+    otlp:
+      port: 21893
       ssl: false
-      port: 21890
-      # port: 4317 # Единый стандартный gRPC-порт OpenTelemetry
+      # trace-analytics-raw uses the classic Trace Analytics schema. Keep
+      # metrics in the native OTel format, but decode traces for that sink.
+      traces_output_format: opensearch
       authentication:
-        # Рекомендуется настроить unauthenticated: false и добавить TLS в продакшене
         unauthenticated:
-  buffer:
-    bounded_blocking:
-      buffer_size: 1024
-      batch_size: 1
+  route:
+    - traces: 'getEventType() == "TRACE"'
+    - metrics: 'getEventType() == "METRIC"'
   sink:
-    - stdout:
     - pipeline:
-        name: "raw-pipeline"
+        name: "otel-traces-pipeline"
+        routes:
+          - traces
+    - pipeline:
+        name: "otel-metrics-pipeline"
+        routes:
+          - metrics
+
+otel-traces-pipeline:
+  source:
+    pipeline:
+      name: "otel-telemetry-pipeline"
+  sink:
+    - pipeline:
+        name: "raw-traces-pipeline"
     - pipeline:
         name: "service-map-pipeline"
 
-raw-pipeline:
+raw-traces-pipeline:
   source:
     pipeline:
-      name: "entry-pipeline"
+      name: "otel-traces-pipeline"
   buffer:
     bounded_blocking:
       buffer_size: 1024
-      batch_size: 1
+      batch_size: 128
   processor:
     - otel_traces:
   sink:
@@ -39,13 +55,12 @@ raw-pipeline:
 service-map-pipeline:
   source:
     pipeline:
-      name: "entry-pipeline"
+      name: "otel-traces-pipeline"
   buffer:
     bounded_blocking:
       buffer_size: 1024
-      batch_size: 1
+      batch_size: 128
   processor:
-    - otel_traces:
     - service_map:
         window_duration: 60
   sink:
@@ -55,3 +70,28 @@ service-map-pipeline:
         password: "YourSecurePassword123!"
         insecure: true
         index_type: "trace-analytics-service-map"
+
+otel-metrics-pipeline:
+  source:
+    pipeline:
+      name: "otel-telemetry-pipeline"
+  buffer:
+    bounded_blocking:
+      buffer_size: 1024
+      batch_size: 128
+  processor:
+    - otel_metrics:
+        calculate_histogram_buckets: true
+        calculate_exponential_histogram_buckets: true
+        exponential_histogram_max_allowed_scale: 10
+        flatten_attributes: false
+  sink:
+    # Dashboards читает SS4O-метрики из OpenSearch; он не является Data Prepper sink.
+    - opensearch:
+        hosts: [ "https://opensearch:9200" ]
+        username: "admin"
+        password: "YourSecurePassword123!"
+        insecure: true
+        template_type: index-template
+        index: ss4o_metrics-otel-%{yyyy.MM.dd}
+        bulk_size: 4

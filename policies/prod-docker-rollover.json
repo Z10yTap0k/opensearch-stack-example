@@ -1,0 +1,25 @@
+{
+  "policy": {
+    "description": "Roll over prod-docker data stream backing indices after 50 documents.",
+    "default_state": "rollover",
+    "states": [
+      {
+        "name": "rollover",
+        "actions": [
+          {
+            "rollover": {
+              "min_doc_count": 50
+            }
+          }
+        ],
+        "transitions": []
+      }
+    ],
+    "ism_template": {
+      "index_patterns": [
+        "prod-docker*"
+      ],
+      "priority": 100
+    }
+  }
+}

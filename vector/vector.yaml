@@ -1,0 +1,89 @@
+data_dir: /var/lib/vector
+
+sources:
+  docker_stdout:
+    type: docker_logs
+    docker_host: unix:///var/run/docker.sock
+    # Avoid feeding Vector's own operational logs back into the source.
+    exclude_containers:
+      - vector
+    auto_partial_merge: true
+
+transforms:
+  enrich_docker_logs:
+    type: remap
+    inputs:
+      - docker_stdout
+    source: |
+      .event.dataset = "docker.stdout"
+      .event.module = "docker"
+      ."@timestamp" = .timestamp
+      # Docker Compose labels contain dots in keys. They produce conflicting
+      # dynamic mappings in OpenSearch, so keep stable container metadata only.
+      del(.label)
+      del(.labels)
+
+  route_by_owner:
+    type: route
+    inputs:
+      - enrich_docker_logs
+    route:
+      dev_client: '.container_name == "demo-client"'
+      prod_server: '.container_name == "demo-server"'
+      prod_docker: '.container_name != "demo-client" && .container_name != "demo-server"'
+
+sinks:
+  dev_client:
+    type: elasticsearch
+    inputs:
+      - route_by_owner.dev_client
+    endpoints:
+      - "https://admin:YourSecurePassword123%21@opensearch:9200"
+    opensearch_service_type: managed
+    api_version: v7
+    bulk:
+      action: create
+      index: dev-app-client
+    tls:
+      # The local OpenSearch node uses the demo self-signed certificate.
+      verify_certificate: false
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: block
+
+  prod_server:
+    type: elasticsearch
+    inputs:
+      - route_by_owner.prod_server
+    endpoints:
+      - "https://admin:YourSecurePassword123%21@opensearch:9200"
+    opensearch_service_type: managed
+    api_version: v7
+    bulk:
+      action: create
+      index: prod-app-server
+    tls:
+      verify_certificate: false
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: block
+
+  prod_docker:
+    type: elasticsearch
+    inputs:
+      - route_by_owner.prod_docker
+    endpoints:
+      - "https://admin:YourSecurePassword123%21@opensearch:9200"
+    opensearch_service_type: managed
+    api_version: v7
+    bulk:
+      action: create
+      index: prod-docker
+    tls:
+      verify_certificate: false
+    buffer:
+      type: disk
+      max_size: 268435488
+      when_full: block
