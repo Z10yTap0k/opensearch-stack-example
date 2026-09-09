@@ -1,4 +1,3 @@
-using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -19,11 +18,11 @@ builder.Services.AddLogging(logging => logging.AddConsole());
 // They can also be provided through application configuration below.
 // ---------------------------------------------------------------------------
 var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT")
-                   ?? "http://localhost:4317";
+                   ?? throw new Exception("unset OTEL_EXPORTER_OTLP_ENDPOINT");
 
 var serviceVersion = "1.0.0";
 var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME")
-                  ?? "demo-server";
+                  ?? throw new Exception("unset OTEL_SERVICE_NAME");
 
 var resourceBuilder = ResourceBuilder.CreateDefault()
     .AddService(serviceName, serviceVersion: serviceVersion);

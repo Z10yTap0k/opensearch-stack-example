@@ -107,67 +107,6 @@ services:
     networks:
       - otel-network
 
-  data-prepper:
-    image: opensearchproject/data-prepper:latest
-    container_name: data-prepper
-    volumes:
-      - ./data-prepper/pipelines:/usr/share/data-prepper/pipelines:ro
-      - ./data-prepper/config/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml
-      - ./data-prepper/log4j2.properties:/usr/share/data-prepper/config/log4j2.properties
-    ports:
-      - "21893:21893" # Унифицированный OTLP/gRPC endpoint Data Prepper
-    depends_on:
-      - opensearch
-    networks:
-      - otel-network
-
-  vector:
-    image: timberio/vector:0.57.0-alpine
-    container_name: vector
-    command: ["--config", "/etc/vector/vector.yaml"]
-    environment:
-      OPENSEARCH_USERNAME: admin
-      OPENSEARCH_PASSWORD: YourSecurePassword123!
-    volumes:
-      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
-      # Vector uses Docker API to collect stdout/stderr from containers.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - vector-data:/var/lib/vector
-    depends_on:
-      - opensearch
-    networks:
-      - otel-network
-    restart: unless-stopped
-
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
-    container_name: otel-collector
-    command: ["--config=/etc/otel-collector-config.yaml"]
-    volumes:
-      - ./otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml
-    environment:
-      # AWS SDK внутри коллектора автоматически прочитает эти переменные
-      - AWS_ACCESS_KEY_ID=minioadmin
-      - AWS_SECRET_ACCESS_KEY=MinioPassword123!
-    ports:
-      - "4317:4317"   # OTLP gRPC receiver
-      - "4318:4318"   # OTLP HTTP receiver
-      - "8889:8889"   # Prometheus exporter metrics
-    # healthcheck:
-    #   # Проверяем официальный эндпоинт здоровья коллектора
-    #   #test: ["CMD", "curl", "-f", "http://localhost:13133/"]
-    #   # test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:13133/ || exit 1"]
-    #   test: ["CMD", "/otelcol-contrib", "healthcheck"]
-    #   interval: 10s
-    #   timeout: 5s
-    #   retries: 3
-    depends_on:
-      - opensearch
-      - data-prepper
-      - seaweedfs
-    networks:
-      - otel-network
-
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
@@ -185,36 +124,178 @@ services:
     networks:
       - otel-network
 
-  server:
+########################################################################################################
+############# PROD
+########################################################################################################
+  prod-server:
     build:
       context: ./dotnet-otel-demo/server
       dockerfile: Dockerfile
-    container_name: demo-server
+    container_name: prod-demo-server
     environment:
-      OTEL_SERVICE_NAME: demo-server
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
-    ports:
-      - "5000:5000"
+      OTEL_SERVICE_NAME: prod-demo-server
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://prod-otel-collector:4317
+    # ports:
+    #   - "5000:5000"
+    depends_on:
+      - prod-otel-collector
     networks:
       - otel-network
     restart: unless-stopped
 
-  client:
+  prod-client:
     build:
       context: ./dotnet-otel-demo/client
       dockerfile: Dockerfile
-    container_name: demo-client
+    container_name: prod-demo-client
     environment:
-      SERVER_URL: http://demo-server:5000/api/test
+      SERVER_URL: http://prod-demo-server:5000/api/test
       INTERVAL_SECONDS: "30"
-      OTEL_SERVICE_NAME: demo-client
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: prod-demo-client
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://prod-otel-collector:4317
     depends_on:
-      - server
-      - otel-collector
+      - prod-server
+      - prod-otel-collector
     networks:
       - otel-network
     restart: unless-stopped
+
+  prod-otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: prod-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./tenants/prod/otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    environment:
+      # AWS SDK внутри коллектора автоматически прочитает эти переменные
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=MinioPassword123!
+    # ports:
+    #   - "4317:4317"   # OTLP gRPC receiver
+    #   - "4318:4318"   # OTLP HTTP receiver
+    #   - "8889:8889"   # Prometheus exporter metrics
+    # healthcheck:
+    #   # Проверяем официальный эндпоинт здоровья коллектора
+    #   #test: ["CMD", "curl", "-f", "http://localhost:13133/"]
+    #   # test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:13133/ || exit 1"]
+    #   test: ["CMD", "/otelcol-contrib", "healthcheck"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
+    depends_on:
+      - prod-data-prepper
+      - seaweedfs
+    networks:
+      - otel-network
+
+  prod-vector:
+    image: timberio/vector:0.57.0-alpine
+    container_name: prod-vector
+    command: ["--config", "/etc/vector/vector.yaml"]
+    environment:
+      OPENSEARCH_USERNAME: admin
+      OPENSEARCH_PASSWORD: YourSecurePassword123!
+    volumes:
+      - ./tenants/prod/vector/vector.yaml:/etc/vector/vector.yaml:ro
+      # Vector uses Docker API to collect stdout/stderr from containers.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # - vector-data:/var/lib/vector
+    depends_on:
+      - opensearch
+    networks:
+      - otel-network
+    restart: unless-stopped
+
+  prod-data-prepper:
+    image: opensearchproject/data-prepper:latest
+    container_name: prod-data-prepper
+    volumes:
+      - ./tenants/prod/data-prepper/pipelines:/usr/share/data-prepper/pipelines:ro
+      - ./tenants/prod/data-prepper/config/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml
+    # ports:
+    #   - "21893:21893" # Унифицированный OTLP/gRPC endpoint Data Prepper
+    depends_on:
+      - opensearch
+    networks:
+      - otel-network
+
+########################################################################################################
+############# DEV
+########################################################################################################
+  dev-server:
+    build:
+      context: ./dotnet-otel-demo/server
+      dockerfile: Dockerfile
+    container_name: dev-demo-server
+    environment:
+      OTEL_SERVICE_NAME: dev-demo-server
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://dev-otel-collector:4317
+    # ports:
+    #   - "5000:5000"
+    depends_on:
+      - dev-otel-collector
+    networks:
+      - otel-network
+    restart: unless-stopped
+
+  dev-client:
+    build:
+      context: ./dotnet-otel-demo/client
+      dockerfile: Dockerfile
+    container_name: dev-demo-client
+    environment:
+      SERVER_URL: http://dev-demo-server:5000/api/test
+      INTERVAL_SECONDS: "30"
+      OTEL_SERVICE_NAME: dev-demo-client
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://dev-otel-collector:4317
+    depends_on:
+      - dev-server
+      - dev-otel-collector
+    networks:
+      - otel-network
+    restart: unless-stopped
+
+  dev-data-prepper:
+    image: opensearchproject/data-prepper:latest
+    container_name: dev-data-prepper
+    volumes:
+      - ./tenants/dev/data-prepper/pipelines:/usr/share/data-prepper/pipelines:ro
+      - ./tenants/dev/data-prepper/config/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml
+    # ports:
+    #   - "21893:21893" # Унифицированный OTLP/gRPC endpoint Data Prepper
+    depends_on:
+      - opensearch
+    networks:
+      - otel-network
+
+  dev-otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: dev-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./tenants/dev/otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    environment:
+      # AWS SDK внутри коллектора автоматически прочитает эти переменные
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=MinioPassword123!
+    # ports:
+    #   - "4317:4317"   # OTLP gRPC receiver
+    #   - "4318:4318"   # OTLP HTTP receiver
+    #   - "8889:8889"   # Prometheus exporter metrics
+    # healthcheck:
+    #   # Проверяем официальный эндпоинт здоровья коллектора
+    #   #test: ["CMD", "curl", "-f", "http://localhost:13133/"]
+    #   # test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:13133/ || exit 1"]
+    #   test: ["CMD", "/otelcol-contrib", "healthcheck"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 3
+    depends_on:
+      - opensearch
+      - dev-data-prepper
+      - seaweedfs
+    networks:
+      - otel-network
 
 volumes:
   seaweedfs-data:
@@ -223,8 +304,8 @@ volumes:
     driver: local
   prometheus-data:
     driver: local
-  vector-data:
-    driver: local
+  # vector-data:
+  #   driver: local
 
 networks:
   otel-network:

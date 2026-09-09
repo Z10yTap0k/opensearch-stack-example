@@ -14,17 +14,19 @@ using OpenTelemetry.Trace;
 //   OTEL_EXPORTER_OTLP_ENDPOINT  OTLP collector endpoint default: http://localhost:4317
 // ---------------------------------------------------------------------------
 var serverUrl = Environment.GetEnvironmentVariable("SERVER_URL")
-                ?? "http://localhost:5000/api/test";
+                ?? throw new Exception("unset SERVER_URL");
+
 var intervalSec = int.TryParse(Environment.GetEnvironmentVariable("INTERVAL_SECONDS"), out var parsed)
     ? parsed
     : 10;
 
 var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME")
-                  ?? "demo-client";
+                  ?? throw new Exception("unset OTEL_SERVICE_NAME");
+
 var serviceVersion = "1.0.0";
 
 var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT")
-                   ?? "http://localhost:4317";
+                   ?? throw new Exception("unset OTEL_EXPORTER_OTLP_ENDPOINT");
 
 // A single shared HttpClient. The Http instrumentation automatically adds
 // trace / baggage headers to every outgoing request, stitching the trace
