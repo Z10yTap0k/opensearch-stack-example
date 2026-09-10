@@ -1,0 +1,15 @@
+{
+  "config": {
+    "name": "Telegram Notification Channel",
+    "description": "Канал отправки алертов в Telegram-чат",
+    "config_type": "webhook",
+    "is_enabled": true,
+    "webhook": {
+      "url": "https://telegram.org<ВАШ_ТОКЕН_БОТА>/sendMessage",
+      "method": "POST",
+      "header_params": {
+        "Content-Type": "application/json"
+      }
+    }
+  }
+}
