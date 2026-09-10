@@ -1,0 +1,48 @@
+{
+  "type": "monitor",
+  "name": "Prod team log rate above 10 per minute",
+  "monitor_type": "query_level_monitor",
+  "enabled": true,
+  "schedule": { "period": { "interval": 1, "unit": "MINUTES" } },
+  "inputs": [{
+    "search": {
+      "indices": ["prod-*"],
+      "query": {
+        "size": 0,
+        "query": {
+          "bool": {
+            "filter": [{
+              "range": {
+                "@timestamp": {
+                  "gte": "{{period_end}}||-1m",
+                  "lte": "{{period_end}}",
+                  "format": "epoch_millis"
+                }
+              }
+            }]
+          }
+        }
+      }
+    }
+  }],
+  "triggers": [{
+    "name": "More than 10 prod log records per minute",
+    "severity": "2",
+    "condition": {
+      "script": {
+        "source": "ctx.results[0].hits.total.value > 10",
+        "lang": "painless"
+      }
+    },
+    "actions": [{
+      "name": "Send prod log rate alert to local webhook",
+      "destination_id": "local-webhook",
+      "message_template": {
+        "source": "{ \"team\": \"prod\", \"event\": \"log_rate_threshold_exceeded\", \"monitor\": \"{{ctx.monitor.name}}\", \"trigger\": \"{{ctx.trigger.name}}\", \"severity\": \"{{ctx.trigger.severity}}\", \"indices\": \"prod-*\", \"count\": {{ctx.results.0.hits.total.value}}, \"threshold\": 10, \"window_seconds\": 60, \"period_start\": \"{{ctx.periodStart}}\", \"period_end\": \"{{ctx.periodEnd}}\", \"alert_id\": \"{{ctx.alert.id}}\", \"alert_version\": \"{{ctx.alert.version}}\", \"alert_acknowledged\": \"{{ctx.alert.isAcknowledged}}\", \"query_error\": \"{{ctx.error}}\", \"telegram_channel_id\": \"-11111111\", \"message\": \"*OpenSearch log-rate alert*\\n\\n*Team:* prod\\n*Severity:* {{ctx.trigger.severity}}\\n*Log records:* {{ctx.results.0.hits.total.value}} (threshold: 10)\\n*Indices:* `prod-*`\\n*Period:* {{ctx.periodStart}} — {{ctx.periodEnd}}\\n*Monitor:* {{ctx.monitor.name}}\\n*Trigger:* {{ctx.trigger.name}}\" }",
+        "lang": "mustache"
+      },
+      "throttle_enabled": false,
+      "subject_template": { "source": "Prod log rate exceeded", "lang": "mustache" }
+    }]
+  }]
+}

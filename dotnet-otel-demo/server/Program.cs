@@ -1,11 +1,10 @@
 using OpenTelemetry.Metrics;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using OpenTelemetryDemo.Server;
 
 var builder = WebApplication.CreateBuilder(args);
-
-builder.Services.AddLogging(logging => logging.AddConsole());
 
 // ---------------------------------------------------------------------------
 // OpenTelemetry configuration
@@ -26,6 +25,23 @@ var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME")
 
 var resourceBuilder = ResourceBuilder.CreateDefault()
     .AddService(serviceName, serviceVersion: serviceVersion);
+
+// Send application logs through the same OTLP endpoint as traces and metrics.
+// Clearing the default console provider prevents this service's logs from being
+// collected a second time by a Docker stdout collector.
+builder.Logging.ClearProviders();
+builder.Logging.AddOpenTelemetry(logging =>
+{
+    logging.SetResourceBuilder(resourceBuilder);
+    logging.IncludeFormattedMessage = true;
+    logging.IncludeScopes = true;
+    logging.ParseStateValues = true;
+    logging.AddOtlpExporter(o =>
+    {
+        o.Endpoint = new Uri(otlpEndpoint);
+        o.Protocol = OpenTelemetry.Exporter.OtlpExportProtocol.Grpc;
+    });
+});
 
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing =>
@@ -62,11 +78,12 @@ builder.Services.AddOpenTelemetry()
 // ---------------------------------------------------------------------------
 builder.Services.AddControllers();
 
-// A friendly banner so you know which service is running where.
-Console.WriteLine("[server] OpenTelemetry tracing enabled -> service=" + serviceName
-                                                                       + ", otlp=" + otlpEndpoint);
-
 var app = builder.Build();
+
+app.Logger.LogInformation(
+    "OpenTelemetry logs, traces, and metrics enabled; service={ServiceName}, otlp={OtlpEndpoint}",
+    serviceName,
+    otlpEndpoint);
 
 // Lightweight health endpoint.
 app.MapGet("/health", () => Results.Ok(new { status = "ok", time = DateTimeOffset.Now }));

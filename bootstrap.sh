@@ -11,6 +11,178 @@ until curl -s -k -u "$AUTH" "$OPENSEARCH_URL/_cluster/health" | grep -q '"status
 done
 echo "OpenSearch готов! Начинаем настройку Security API..."
 
+# Канал создаётся с предсказуемым ID: повторный запуск bootstrap обновляет URL,
+# а не создаёт ещё один channel.
+NOTIFICATION_CONFIG_ID="local-webhook"
+NOTIFICATION_CONFIG_URL="$OPENSEARCH_URL/_plugins/_notifications/configs/$NOTIFICATION_CONFIG_ID"
+NOTIFICATION_CONFIG_PAYLOAD='/tmp/local-webhook-notification.json'
+cat > "$NOTIFICATION_CONFIG_PAYLOAD" <<'EOF'
+{
+  "config": {
+    "name": "Local webhook receiver",
+    "description": "Receives OpenSearch custom-webhook notifications in Docker Compose logs",
+    "config_type": "webhook",
+    "is_enabled": true,
+    "webhook": {
+      "url": "http://notification-webhook:8080/notifications",
+      "method": "POST",
+      "header_params": {
+        "Content-Type": "application/json"
+      }
+    }
+  }
+}
+EOF
+
+echo "Создание notification channel ${NOTIFICATION_CONFIG_ID}..."
+notification_metadata="/tmp/${NOTIFICATION_CONFIG_ID}.metadata"
+if notification_status=$(curl -sS -o "$notification_metadata" -w '%{http_code}' \
+  -X GET -k -u "$AUTH" "$NOTIFICATION_CONFIG_URL"); then
+  case "$notification_status" in
+    200)
+      notification_method="PUT"
+      notification_payload="$NOTIFICATION_CONFIG_PAYLOAD"
+      echo "Notification channel ${NOTIFICATION_CONFIG_ID} уже существует; выполняется обновление."
+      ;;
+    404)
+      notification_method="POST"
+      notification_payload="/tmp/${NOTIFICATION_CONFIG_ID}.create.json"
+      jq --arg config_id "$NOTIFICATION_CONFIG_ID" --arg name "$NOTIFICATION_CONFIG_ID" \
+        '. + {config_id: $config_id, name: $name}' \
+        "$NOTIFICATION_CONFIG_PAYLOAD" > "$notification_payload"
+      echo "Notification channel ${NOTIFICATION_CONFIG_ID} не найден; выполняется создание."
+      ;;
+    *)
+      echo "Не удалось получить notification channel ${NOTIFICATION_CONFIG_ID}. HTTP status: ${notification_status}" >&2
+      cat "$notification_metadata" >&2
+      exit 1
+      ;;
+  esac
+else
+  curl_status=$?
+  echo "Сетевая ошибка при получении notification channel ${NOTIFICATION_CONFIG_ID} (curl exit code ${curl_status})." >&2
+  exit "$curl_status"
+fi
+rm -f "$notification_metadata"
+
+if [ "$notification_method" = "PUT" ]; then
+  notification_request_url="$NOTIFICATION_CONFIG_URL"
+else
+  notification_request_url="$OPENSEARCH_URL/_plugins/_notifications/configs"
+fi
+
+if ! notification_status=$(curl -sS -o /tmp/${NOTIFICATION_CONFIG_ID}.response -w '%{http_code}' \
+  -X "$notification_method" -k -u "$AUTH" \
+  -H "Content-Type: application/json" \
+  "$notification_request_url" \
+  --data-binary "@$notification_payload"); then
+  curl_status=$?
+  echo "Сетевая ошибка при сохранении notification channel ${NOTIFICATION_CONFIG_ID} (curl exit code ${curl_status})." >&2
+  exit "$curl_status"
+fi
+
+case "$notification_status" in
+  2??) echo "Notification channel ${NOTIFICATION_CONFIG_ID} сохранён (HTTP ${notification_status})." ;;
+  *)
+    echo "Не удалось сохранить notification channel ${NOTIFICATION_CONFIG_ID}. HTTP status: ${notification_status}" >&2
+    cat /tmp/${NOTIFICATION_CONFIG_ID}.response >&2
+    echo "Отправленный JSON:" >&2
+    cat "$notification_payload" >&2
+    exit 1
+    ;;
+esac
+rm -f "$NOTIFICATION_CONFIG_PAYLOAD" "/tmp/${NOTIFICATION_CONFIG_ID}.create.json" "/tmp/${NOTIFICATION_CONFIG_ID}.response"
+
+# Query-level monitors считают документы за интервал запуска (одну минуту).
+# Мониторы не имеют задаваемого client-side ID, поэтому bootstrap ищет их по
+# уникальному имени и обновляет с текущими seq_no/primary_term.
+ALERTING_MONITORS_URL="$OPENSEARCH_URL/_plugins/_alerting/monitors"
+
+upsert_log_rate_monitor() {
+  monitor_name="$1"
+  monitor_payload="$2"
+  monitor_search_file="/tmp/$(echo "$monitor_name" | tr ' ' '-').search.json"
+  monitor_search_response_file="/tmp/$(echo "$monitor_name" | tr ' ' '-').monitors.json"
+
+  jq -n --arg name "$monitor_name" '{size: 10, query: {match: {"monitor.name": $name}}}' > "$monitor_search_file"
+
+  echo "Настройка alert monitor ${monitor_name}..."
+  if monitor_status=$(curl -sS -o "$monitor_search_response_file" -w '%{http_code}' \
+    -X POST -k -u "$AUTH" -H "Content-Type: application/json" \
+    "$ALERTING_MONITORS_URL/_search" --data-binary "@$monitor_search_file"); then
+    :
+  else
+    curl_status=$?
+    echo "Сетевая ошибка при поиске alert monitor ${monitor_name} (curl exit code ${curl_status})." >&2
+    exit "$curl_status"
+  fi
+  rm -f "$monitor_search_file"
+  if [ "$monitor_status" != "200" ]; then
+    echo "Не удалось найти alert monitor ${monitor_name}. HTTP status: ${monitor_status}" >&2
+    cat "$monitor_search_response_file" >&2
+    exit 1
+  fi
+
+  monitor_id=$(jq -er --arg name "$monitor_name" '
+    [.hits.hits[]? | select(._source.name == $name) | ._id]
+    | if length == 0 then "" elif length == 1 then .[0] else error("duplicate monitor name") end
+  ' "$monitor_search_response_file")
+  rm -f "$monitor_search_response_file"
+
+  if [ -n "$monitor_id" ]; then
+    monitor_metadata_file="/tmp/${monitor_id}.metadata.json"
+    if monitor_status=$(curl -sS -o "$monitor_metadata_file" -w '%{http_code}' \
+      -X GET -k -u "$AUTH" "$ALERTING_MONITORS_URL/$monitor_id"); then
+      :
+    else
+      curl_status=$?
+      echo "Сетевая ошибка при получении alert monitor ${monitor_name} (curl exit code ${curl_status})." >&2
+      exit "$curl_status"
+    fi
+    if [ "$monitor_status" != "200" ]; then
+      echo "Не удалось получить alert monitor ${monitor_name}. HTTP status: ${monitor_status}" >&2
+      cat "$monitor_metadata_file" >&2
+      exit 1
+    fi
+    monitor_seq_no=$(jq -er '._seq_no' "$monitor_metadata_file")
+    monitor_primary_term=$(jq -er '._primary_term' "$monitor_metadata_file")
+    rm -f "$monitor_metadata_file"
+    monitor_method="PUT"
+    monitor_url="$ALERTING_MONITORS_URL/$monitor_id?if_seq_no=$monitor_seq_no&if_primary_term=$monitor_primary_term"
+    echo "Alert monitor ${monitor_name} уже существует; выполняется обновление."
+  else
+    monitor_method="POST"
+    monitor_url="$ALERTING_MONITORS_URL"
+    echo "Alert monitor ${monitor_name} не найден; выполняется создание."
+  fi
+
+  monitor_response_file="/tmp/$(echo "$monitor_name" | tr ' ' '-').response.json"
+  if monitor_status=$(curl -sS -o "$monitor_response_file" -w '%{http_code}' \
+    -X "$monitor_method" -k -u "$AUTH" \
+    -H "Content-Type: application/json" \
+    "$monitor_url" --data-binary "@$monitor_payload"); then
+    :
+  else
+    curl_status=$?
+    echo "Сетевая ошибка при сохранении alert monitor ${monitor_name} (curl exit code ${curl_status})." >&2
+    exit "$curl_status"
+  fi
+  case "$monitor_status" in
+    2??) echo "Alert monitor ${monitor_name} сохранён (HTTP ${monitor_status})." ;;
+    *)
+      echo "Не удалось сохранить alert monitor ${monitor_name}. HTTP status: ${monitor_status}" >&2
+      cat "$monitor_response_file" >&2
+      echo "Отправленный JSON:" >&2
+      cat "$monitor_payload" >&2
+      exit 1
+      ;;
+  esac
+  rm -f "$monitor_response_file"
+}
+
+upsert_log_rate_monitor "Dev team log rate above 10 per minute" /monitors/dev-log-rate.json
+upsert_log_rate_monitor "Prod team log rate above 10 per minute" /monitors/prod-log-rate.json
+
 echo "Ожидание OIDC discovery Keycloak..."
 until curl -fsS \
   "http://keycloak.lvh.me:8080/realms/opensearch/.well-known/openid-configuration" \
@@ -109,6 +281,54 @@ for template_file in /templates/*.json; do
     rm -f "$response_file" "$headers_file"
     exit "$curl_status"
   fi
+done
+
+# The Data Prepper OpenSearch sink verifies its target by creating an index.
+# A composable template with "data_stream": {} rejects that operation, so
+# create the named streams explicitly after their templates have been loaded.
+for data_stream in dev-app-server dev-app-client prod-app-server prod-app-client; do
+  data_stream_url="$OPENSEARCH_URL/_data_stream/$data_stream"
+  metadata_file="/tmp/opensearch-data-stream-${data_stream}.metadata"
+
+  if existing_status=$(curl -sS -o "$metadata_file" -w '%{http_code}' \
+    -X GET -k -u "$AUTH" "$data_stream_url"); then
+    case "$existing_status" in
+      200)
+        echo "Data stream ${data_stream} уже существует."
+        ;;
+      404)
+        echo "Создание data stream ${data_stream}..."
+        if create_status=$(curl -sS -o "$metadata_file" -w '%{http_code}' \
+          -X PUT -k -u "$AUTH" "$data_stream_url"); then
+          case "$create_status" in
+            2??) echo "Data stream ${data_stream} создан (HTTP ${create_status})." ;;
+            *)
+              echo "Не удалось создать data stream ${data_stream} (HTTP ${create_status})." >&2
+              cat "$metadata_file" >&2
+              rm -f "$metadata_file"
+              exit 1
+              ;;
+          esac
+        else
+          echo "Сетевая ошибка при создании data stream ${data_stream}." >&2
+          rm -f "$metadata_file"
+          exit 1
+        fi
+        ;;
+      *)
+        echo "Не удалось проверить data stream ${data_stream} (HTTP ${existing_status})." >&2
+        cat "$metadata_file" >&2
+        rm -f "$metadata_file"
+        exit 1
+        ;;
+    esac
+  else
+    echo "Сетевая ошибка при проверке data stream ${data_stream}." >&2
+    rm -f "$metadata_file"
+    exit 1
+  fi
+
+  rm -f "$metadata_file"
 done
 
 echo "Загрузка ISM policies..."
@@ -255,9 +475,9 @@ for team in dev prod; do
   role="${tenant}_user"
 
   if [ "$team" = "dev" ]; then
-    log_index_permissions='"dev-app-client", ".ds-dev-app-client-*"'
+    log_index_permissions='"dev-app-server", ".ds-dev-app-server-*", "dev-app-client", ".ds-dev-app-client-*"'
   else
-    log_index_permissions='"prod-app-server", ".ds-prod-app-server-*", "prod-docker", ".ds-prod-docker-*"'
+    log_index_permissions='"prod-app-server", ".ds-prod-app-server-*", "prod-app-client", ".ds-prod-app-client-*", "prod-docker", ".ds-prod-docker-*"'
   fi
 
   echo "Создание роли ${role}..."
@@ -339,32 +559,32 @@ curl -sS -k \
 #     }
 #   }' || true
 
-echo "Creating dev tenant Docker logs data view..."
+echo "Creating dev tenant application logs data view..."
 curl -sS -k \
   -u "$AUTH" \
   -H "osd-xsrf: true" \
   -H "securitytenant: dev_team" \
   -H "Content-Type: application/json" \
   -X POST \
-  "$DASH_URL/api/saved_objects/index-pattern/dev-app-client-logs" \
+  "$DASH_URL/api/saved_objects/index-pattern/dev-app-logs" \
   -d '{
     "attributes": {
-      "title": "dev-app-client",
+      "title": "dev-app-*",
       "timeFieldName": "@timestamp"
     }
   }' || true
 
-echo "Creating prod tenant Docker logs data view..."
+echo "Creating prod tenant application logs data view..."
 curl -sS -k \
   -u "$AUTH" \
   -H "osd-xsrf: true" \
   -H "securitytenant: prod_team" \
   -H "Content-Type: application/json" \
   -X POST \
-  "$DASH_URL/api/saved_objects/index-pattern/prod-docker-logs" \
+  "$DASH_URL/api/saved_objects/index-pattern/prod-app-logs" \
   -d '{
     "attributes": {
-      "title": "prod-*",
+      "title": "prod-app-*",
       "timeFieldName": "@timestamp"
     }
   }' || true

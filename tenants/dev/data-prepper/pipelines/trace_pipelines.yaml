@@ -12,9 +12,14 @@ otel-telemetry-pipeline:
       authentication:
         unauthenticated:
   route:
+    - logs: 'getEventType() == "LOG"'
     - traces: 'getEventType() == "TRACE"'
     - metrics: 'getEventType() == "METRIC"'
   sink:
+    - pipeline:
+        name: "otel-logs-pipeline"
+        routes:
+          - logs
     - pipeline:
         name: "otel-traces-pipeline"
         routes:
@@ -23,6 +28,40 @@ otel-telemetry-pipeline:
         name: "otel-metrics-pipeline"
         routes:
           - metrics
+
+# Route each application's OTLP logs into its own dev data stream.
+otel-logs-pipeline:
+  source:
+    pipeline:
+      name: "otel-telemetry-pipeline"
+  buffer:
+    bounded_blocking:
+      buffer_size: 1024
+      batch_size: 128
+  route:
+    - server: '/resource/attributes/service.name == "dev-demo-server"'
+    - client: '/resource/attributes/service.name == "dev-demo-client"'
+  sink:
+    - opensearch:
+        hosts: [ "https://opensearch:9200" ]
+        username: "admin"
+        password: "YourSecurePassword123!"
+        insecure: true
+        template_type: index-template
+        index_type: custom
+        index: dev-app-server
+        routes: [server]
+        bulk_size: 4
+    - opensearch:
+        hosts: [ "https://opensearch:9200" ]
+        username: "admin"
+        password: "YourSecurePassword123!"
+        insecure: true
+        template_type: index-template
+        index_type: custom
+        index: dev-app-client
+        routes: [client]
+        bulk_size: 4
 
 otel-traces-pipeline:
   source:

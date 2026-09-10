@@ -31,24 +31,24 @@ exporters:
   #     auth:
   #       authenticator: basicauth/opensearch
 
-  otlphttp/prometheus:
-    endpoint: "http://prometheus:9090/api/v1/otlp"
-    tls:
-      insecure: true
+  # otlphttp/prometheus:
+  #   endpoint: "http://prometheus:9090/api/v1/otlp"
+  #   tls:
+  #     insecure: true
 
   otlp/data-prepper:
     endpoint: "dev-data-prepper:21893"
     tls:
       insecure: true
 
-  # Экспортёр: хранение логов в S3-совместимом SeaweedFS
-  awss3:
-    s3uploader:
-      s3_bucket: "otel-archive" # ЗАМЕНА: строго s3_bucket вместо bucket
-      region: "us-east-1"
-      s3_force_path_style: true
-      endpoint: "http://seaweedfs:8333"
-      s3_prefix: "logs" # Опциональная папка в бакет
+  # # Экспортёр: хранение логов в S3-совместимом SeaweedFS
+  # awss3:
+  #   s3uploader:
+  #     s3_bucket: "otel-archive" # ЗАМЕНА: строго s3_bucket вместо bucket
+  #     region: "us-east-1"
+  #     s3_force_path_style: true
+  #     endpoint: "http://seaweedfs:8333"
+  #     s3_prefix: "logs" # Опциональная папка в бакет
 
   debug:
     verbosity: normal
@@ -62,7 +62,7 @@ service:
     metrics:
       receivers: [otlp]
       processors: []
-      exporters: [otlphttp/prometheus, otlp/data-prepper]
+      exporters: [otlp/data-prepper, debug]
     traces:
       receivers: [otlp]
       processors: []
@@ -70,4 +70,4 @@ service:
     logs:
       receivers: [otlp]
       processors: []
-      exporters: [awss3, debug]
+      exporters: [otlp/data-prepper, debug]

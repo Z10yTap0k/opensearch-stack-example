@@ -1,0 +1,51 @@
+{
+  "name": "Telegram Alert Monitor",
+  "type": "monitor",
+  "monitor_type": "query_level_monitor",
+  "enabled": true,
+  "schedule": {
+    "period": {
+      "interval": 1,
+      "unit": "MINUTES"
+    }
+  },
+  "inputs": [
+    {
+      "search": {
+        "indices": [
+          "your-index-pattern-*"
+        ],
+        "query": {
+          "query_string": {
+            "query": "status_code: >=500 AND error: *"
+          }
+        }
+      }
+    }
+  ],
+  "triggers": [
+    {
+      "id": "telegram_trigger_id",
+      "name": "High Error Rate Trigger",
+      "severity": "1",
+      "condition": {
+        "script": {
+          "source": "ctx.results[0].hits.total.value > 0",
+          "lang": "painless"
+        }
+      },
+      "actions": [
+        {
+          "id": "send_to_telegram",
+          "name": "Send Alert to Telegram",
+          "destination_id": "ID_ВАШЕГО_DESTINATION_В_OPENSEARCH",
+          "message_template": {
+            "source": "{\"chat_id\": \"ВАШ_CHAT_ID\", \"parse_mode\": \"Markdown\", \"text\": \"🚨 *Сработал алерт в OpenSearch!*\\n\\n📌 *Монитор:* `{{ctx.monitor.name}}`\\n🔥 *Триггер:* `{{ctx.trigger.name}}`\\n⚠️ *Важность:* `{{ctx.trigger.severity}}`\\n\\n📊 Найдено ошибок: `{{ctx.results.0.hits.total.value}}`\"}",
+            "lang": "mustache"
+          },
+          "throttle_enabled": false
+        }
+      ]
+    }
+  ]
+}

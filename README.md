@@ -18,6 +18,7 @@
 | `keycloak` | Локальный OpenID Connect provider; импортирует realm, client и demo-пользователей | Нет persistent-данных (dev mode) |
 | `prometheus` | Хранит метрики и опрашивает метрики Collector | `prometheus-data` |
 | `seaweedfs` | Одноузловой S3 API и Admin UI; один SeaweedFS volume server | `seaweedfs-data` |
+| `notification-webhook` | Принимает custom-webhook notifications от OpenSearch и пишет payload в container log | Нет persistent-данных |
 | `opensearch-bootstrap` | Одноразово создаёт tenants, OIDC domain, роли, S3 snapshot repository, ISM policies и Dashboards data sources | Нет persistent-данных |
 
 ## Схема данных
@@ -90,6 +91,7 @@ docker compose logs --tail=100 client
 | SeaweedFS Admin UI | [http://localhost:23646](http://localhost:23646) | Просмотр и обслуживание single-node SeaweedFS. Не публикуйте интерфейс наружу без защиты. |
 | SeaweedFS S3 API | [http://localhost:9000](http://localhost:9000) | Endpoint для AWS CLI, SDK и S3-клиентов. Это API, не файловый web-интерфейс. |
 | Demo API | [http://localhost:5000/health](http://localhost:5000/health) | Проверка доступности приложения; рабочий endpoint: `/api/test?id=<UUID>`. |
+| Notification webhook | [http://localhost:8081/healthz](http://localhost:8081/healthz) | Приёмник custom webhook; OpenSearch обращается к нему по внутреннему адресу `http://notification-webhook:8080/notifications`. |
 | OTLP gRPC | `localhost:4317` | Приём телеметрии от внешних приложений. |
 | OTLP HTTP | `http://localhost:4318` | Приём OTLP/HTTP (`/v1/traces`, `/v1/metrics`, `/v1/logs`). |
 
@@ -146,6 +148,47 @@ aws --endpoint-url http://localhost:9000 s3 ls
 
 ## Работа с OpenSearch
 
+### Custom webhook notification channel
+
+Bootstrap создаёт (или обновляет при повторном запуске) Notifications channel с ID `local-webhook` и типом **custom webhook**. Его адрес внутри Docker-сети — `http://notification-webhook:8080/notifications`. Выберите этот channel в действии Alerting или ISM policy, чтобы передать уведомление приложению.
+
+Также bootstrap создаёт два query-level Alerting monitor’а, которые выполняются раз в минуту и отправляют уведомление в этот channel, если за последнюю минуту найдено больше 10 лог-документов:
+
+- **Dev team log rate above 10 per minute** — индексы `dev-*`;
+- **Prod team log rate above 10 per minute** — индексы `prod-*`.
+
+Webhook получает JSON с командой, monitor/trigger, severity, набором индексов, числом найденных записей, порогом, границами периода, состоянием alert и ошибкой запроса (если она есть). Приёмник форматирует JSON в многострочный читаемый блок в `docker compose logs notification-webhook`. При повторном запуске bootstrap monitors обновляются, а не дублируются.
+
+### Telegram (необязательно)
+
+Задайте токен перед запуском Compose. Он остаётся только у `notification-webhook`. В payload обоих monitor’ов уже зафиксирован тестовый Telegram chat/channel ID `-11111111`. Поле `message` из alert payload отправляется с Telegram parse mode `Markdown`.
+
+```bash
+export TELEGRAM_BOT_TOKEN='123456:replace-with-your-bot-token'
+docker compose up --build -d
+```
+
+Для групп и каналов добавьте бота в чат и разрешите ему публиковать сообщения. Если `TELEGRAM_BOT_TOKEN` не задан, webhook продолжает логировать уведомления, но не выполняет внешних запросов к Telegram.
+
+Полученный HTTP payload выводится одной строкой в лог контейнера. Проверка приёмника без создания alert:
+
+```bash
+curl -i -X POST http://localhost:8081/notifications \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"test notification"}'
+docker compose logs --tail=20 notification-webhook
+```
+
+Проверить созданный канал и отправить штатное тестовое уведомление из OpenSearch:
+
+```bash
+curl -k -u 'admin:YourSecurePassword123!' \
+  https://localhost:9200/_plugins/_notifications/configs/local-webhook?pretty
+curl -k -u 'admin:YourSecurePassword123!' \
+  https://localhost:9200/_plugins/_notifications/feature/test/local-webhook?pretty
+docker compose logs --tail=20 notification-webhook
+```
+
 Проверить, что Bootstrap зарегистрировал S3 repository:
 
 ```bash
@@ -175,17 +218,18 @@ curl -k -u 'admin:YourSecurePassword123!' \
 
 Data Prepper записывает метрики в OpenSearch, а не в Dashboards: Dashboards только запрашивает и визуализирует их. Bootstrap создаёт Data View **SS4O metrics** (`ss4o_metrics-otel-*`, поле времени `@timestamp`). Откройте его в **Discover** для просмотра необработанных документов или используйте его как источник визуализаций и обычных Dashboards. Если включён Metrics UI с необходимыми feature flags, выберите этот SS4O index там.
 
-## Docker stdout/stderr в OpenSearch
+## OTLP-логи приложений в OpenSearch
 
-`vector` подключается к read-only Docker socket и собирает stdout/stderr всех Compose-контейнеров, кроме самого себя. Логи маршрутизируются по владельцу приложения в три изолированных OpenSearch data streams:
+Логи demo-приложений передаются по OTLP через tenant-specific OTel Collector и Data Prepper. Data Prepper маршрутизирует их по `resource.attributes.service.name` в отдельные OpenSearch data streams:
 
 | Контейнер | Data stream | Index template |
 | --- | --- | --- |
-| `demo-client` | `dev-app-client` | `templates/dev-app-client.json` |
-| `demo-server` | `prod-app-server` | `templates/prod-app-server.json` |
-| Все остальные | `prod-docker` | `templates/prod-docker.json` |
+| `dev-demo-server` | `dev-app-server` | `templates/dev-app-server.json` |
+| `dev-demo-client` | `dev-app-client` | `templates/dev-app-client.json` |
+| `prod-demo-server` | `prod-app-server` | `templates/prod-app-server.json` |
+| `prod-demo-client` | `prod-app-client` | `templates/prod-app-client.json` |
 
-Каждый template задаёт `data_stream`, поле `@timestamp` и настройки single-node кластера (1 shard, 0 replicas). Vector использует Bulk API с действием `create`, поэтому OpenSearch автоматически создаёт data stream по совпадающему template при первой записи. Bootstrap загружает templates через `/_index_template/<name>` до запуска Vector.
+Каждый template задаёт `data_stream`, поле `@timestamp` и настройки single-node кластера (1 shard, 0 replicas). Bootstrap загружает templates и явно создаёт data streams до запуска Data Prepper.
 
 ### ISM policies
 
@@ -199,17 +243,17 @@ docker compose up --force-recreate opensearch-bootstrap
 
 В проект уже включены policies `dev-app-client-rollover`, `prod-app-server-rollover` и `prod-docker-rollover`. Каждая выполняет rollover backing index после 50 документов.
 
-Доступ к логам также разделён по tenants: `dev_team_user` получает доступ только к `dev-app-client` и его backing indices; `prod_team_user` — только к `prod-app-server`, `prod-docker` и их backing indices. Следовательно, пользователь tenant `dev_team` не может прочитать логи tenant `prod_team`, включая запросы напрямую к OpenSearch API.
+Доступ к логам также разделён по tenants: `dev_team_user` получает доступ только к `dev-app-server`, `dev-app-client` и их backing indices; `prod_team_user` — только к `prod-app-server`, `prod-app-client`, `prod-docker` и их backing indices. Следовательно, пользователь tenant `dev_team` не может прочитать логи tenant `prod_team`, включая запросы напрямую к OpenSearch API.
 
 Проверка:
 
 ```bash
 docker compose logs --tail=100 vector
 curl -k -u 'admin:YourSecurePassword123!' \
-  'https://localhost:9200/_data_stream/dev-app-client,prod-app-server,prod-docker?pretty'
+  'https://localhost:9200/_data_stream/dev-app-server,dev-app-client,prod-app-server,prod-app-client?pretty'
 ```
 
-Bootstrap добавляет Data View **Dev client logs** (`dev-app-client`) только в tenant `dev_team` и **Prod logs** (`prod-*`) только в `prod_team`. В Dashboards откройте **Discover** в назначенном tenant и выберите его Data View. Сохранённые поиски и dashboards также остаются изолированы tenants.
+Bootstrap добавляет Data View **Dev app logs** (`dev-app-*`) только в tenant `dev_team` и **Prod app logs** (`prod-app-*`) только в `prod_team`. В Dashboards откройте **Discover** в назначенном tenant и выберите его Data View. Сохранённые поиски и dashboards также остаются изолированы tenants.
 
 ## Работа с Prometheus
 

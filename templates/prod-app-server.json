@@ -8,6 +8,37 @@
       "properties": {
         "@timestamp": { "type": "date" },
         "message": { "type": "match_only_text" },
+        "body": { "type": "match_only_text" },
+        "traceId": { "type": "keyword" },
+        "spanId": { "type": "keyword" },
+        "severityText": { "type": "keyword" },
+        "severityNumber": { "type": "short" },
+        "time": { "type": "date_nanos" },
+        "observedTimestamp": { "type": "date_nanos" },
+        "instrumentationScope": {
+          "properties": {
+            "name": { "type": "keyword" }
+          }
+        },
+        "resource": {
+          "properties": {
+            "attributes": {
+              "properties": {
+                "service": {
+                  "properties": {
+                    "name": { "type": "keyword" },
+                    "version": { "type": "keyword" },
+                    "instance": {
+                      "properties": {
+                        "id": { "type": "keyword" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
         "container_name": { "type": "keyword" },
         "container_id": { "type": "keyword" },
         "image": { "type": "keyword" }

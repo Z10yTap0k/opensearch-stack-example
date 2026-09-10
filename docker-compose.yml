@@ -39,6 +39,7 @@ services:
       - ./bootstrap.sh:/bootstrap.sh
       - ./templates:/templates:ro
       - ./policies:/policies:ro
+      - ./monitors:/monitors:ro
     entrypoint: ["/bin/sh", "-c"]
     command: 
       - "apk add --no-cache curl jq && /bootstrap.sh"
@@ -48,11 +49,26 @@ services:
       - prometheus
       - seaweedfs
       - keycloak
+      - notification-webhook
     extra_hosts:
       - "keycloak.lvh.me:host-gateway"
     networks:
       - otel-network
     restart: "no"
+
+  notification-webhook:
+    build:
+      context: ./notification-webhook
+      dockerfile: Dockerfile
+    container_name: notification-webhook
+    environment:
+      # При пустом значении Telegram-доставка отключена, HTTP logging остаётся.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    ports:
+      - "8081:8080"
+    networks:
+      - otel-network
+    restart: unless-stopped
 
   opensearch-dashboards:
     image: opensearchproject/opensearch-dashboards:latest
@@ -211,11 +227,12 @@ services:
     container_name: prod-data-prepper
     volumes:
       - ./tenants/prod/data-prepper/pipelines:/usr/share/data-prepper/pipelines:ro
-      - ./tenants/prod/data-prepper/config/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml
+      - ./tenants/prod/data-prepper/config:/usr/share/data-prepper/config:ro
     # ports:
     #   - "21893:21893" # Унифицированный OTLP/gRPC endpoint Data Prepper
     depends_on:
-      - opensearch
+      opensearch-bootstrap:
+        condition: service_completed_successfully
     networks:
       - otel-network
 
@@ -260,11 +277,12 @@ services:
     container_name: dev-data-prepper
     volumes:
       - ./tenants/dev/data-prepper/pipelines:/usr/share/data-prepper/pipelines:ro
-      - ./tenants/dev/data-prepper/config/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml
+      - ./tenants/dev/data-prepper/config:/usr/share/data-prepper/config:ro
     # ports:
     #   - "21893:21893" # Унифицированный OTLP/gRPC endpoint Data Prepper
     depends_on:
-      - opensearch
+      opensearch-bootstrap:
+        condition: service_completed_successfully
     networks:
       - otel-network
 
